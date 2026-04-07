@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Pixel Battle ONLINE</title>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <style>
+        :root { --bg: #0b061a; --panel: rgba(20, 15, 35, 0.95); --accent: #a855f7; --text: #f1f5f9; }
+        body { margin: 0; background: var(--bg); color: var(--text); font-family: sans-serif; overflow: hidden; user-select: none; }
+        
+        #authOverlay { position: fixed; inset: 0; background: #020617; display: flex; align-items: center; justify-content: center; z-index: 1000; }
+        .auth-card { background: var(--panel); padding: 40px; border-radius: 24px; border: 1px solid var(--accent); text-align: center; }
+        
+        #viewport { width: 100vw; height: 100vh; cursor: crosshair; }
+        #scene { position: absolute; transform-origin: 0 0; }
+        canvas { background: white; image-rendering: pixelated; }
+
+        #historyMenu { 
+            position: fixed; display: none; background: var(--panel); border: 1px solid var(--accent);
+            padding: 15px; border-radius: 12px; backdrop-filter: blur(10px); z-index: 500; 
+        }
+
+        .ui { position: fixed; bottom: 25px; left: 50%; transform: translateX(-50%); background: var(--panel); padding: 10px 25px; border-radius: 100px; display: flex; align-items: center; gap: 15px; border: 1px solid var(--accent); }
+        .history-item { font-size: 11px; margin: 4px 0; display: flex; gap: 10px; }
+    </style>
+</head>
+<body>
+
+<div id="authOverlay">
+    <div class="auth-card">
+        <h2 style="color:var(--accent)">Pixel Battle Online</h2>
+        <input type="text" id="username" placeholder="Ваш ник" style="padding:10px; border-radius:5px; border:none;">
+        <button onclick="start()" style="padding:10px 20px; background:var(--accent); border:none; border-radius:5px; color:white; cursor:pointer;">Играть</button>
+    </div>
+</div>
+
+<div id="historyMenu">
+    <div style="font-size:10px; color:#888;">ИСТОРИЯ</div>
+    <div id="historyContent"></div>
+</div>
+
+<div id="viewport">
+    <div id="scene"><canvas id="canvas"></canvas></div>
+</div>
+
+<div class="ui">
+    <div id="coords" style="font-family:monospace; color:var(--accent);">X:0 Y:0</div>
+    <input type="color" id="colorPicker" value="#a855f7">
+    <div id="status" style="color:#4ade80; font-size:12px;">● Online</div>
+</div>
+
+<script>
+    // ПОДКЛЮЧЕНИЕ К СЕРВЕРУ (замени на свой URL после деплоя)
+    const socket = io('http://localhost:3000'); 
+    
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const scene = document.getElementById('scene');
+    const GRID = 100, P_SIZE = 20;
+    canvas.width = canvas.height = GRID * P_SIZE;
+
+    let myNick = "";
+    let lastX = -1, lastY = -1;
+
+    function start() {
+        myNick = document.getElementById('username').value || "Аноним";
+        document.getElementById('authOverlay').style.display = 'none';
+    }
+
+    // Принимаем всю доску при входе
+    socket.on('init_board', (board) => {
+        ctx.fillStyle = 'white';
+        ctx.fillRect(0,0, canvas.width, canvas.height);
+        for (let key in board) {
+            const [x, y] = key.split(',').map(Number);
+            ctx.fillStyle = board[key];
+            ctx.fillRect(x*P_SIZE, y*P_SIZE, P_SIZE, P_SIZE);
+        }
+    });
+
+    // Обновление от других игроков
+    socket.on('pixel_update', (data) => {
+        ctx.fillStyle = data.color;
+        ctx.fillRect(data.x * P_SIZE, data.y * P_SIZE, P_SIZE, P_SIZE);
+    });
+
+    // Получение истории пикселя
+    socket.on('history_data', (res) => {
+        const content = document.getElementById('historyContent');
+        content.innerHTML = res.data.length ? res.data.map(h => `
+            <div class="history-item">
+                <b style="color:var(--accent)">${h.user}</b>
+                <span style="color:${h.color}">■</span>
+                <span style="color:#666">${h.time}</span>
+            </div>
+        `).join('') : "Нет истории";
+    });
+
+    function paint(cx, cy) {
+        const rect = canvas.getBoundingClientRect();
+        const x = Math.floor((cx - rect.left) / (P_SIZE * currentScale));
+        const y = Math.floor((cy - rect.top) / (P_SIZE * currentScale));
+
+        if (x >= 0 && x < GRID && y >= 0 && y < GRID && (x !== lastX || y !== lastY)) {
+            const color = document.getElementById('colorPicker').value;
+            lastX = x; lastY = y;
+            
+            // Отправляем на сервер
+            socket.emit('paint', { x, y, color, user: myNick });
+        }
+    }
+
+    // ПКМ - История
+    window.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        const rect = canvas.getBoundingClientRect();
+        const x = Math.floor((e.clientX - rect.left) / (P_SIZE * currentScale));
+        const y = Math.floor((e.clientY - rect.top) / (P_SIZE * currentScale));
+        
+        if (x >= 0 && x < GRID && y >= 0 && y < GRID) {
+            socket.emit('get_history', `${x},${y}`);
+            const menu = document.getElementById('historyMenu');
+            menu.style.display = 'block';
+            menu.style.left = e.clientX + 'px';
+            menu.style.top = e.clientY + 'px';
+        }
+    });
+
+    // --- Камера (Зум и Движение) ---
+    let targetScale = 0.6, targetX = window.innerWidth/2 - (canvas.width*0.6)/2, targetY = window.innerHeight/2 - (canvas.height*0.6)/2;
+    let currentScale = targetScale, currentX = targetX, currentY = targetY;
+
+    function animate() {
+        currentScale += (targetScale - currentScale) * 0.15;
+        currentX += (targetX - currentX) * 0.15;
+        currentY += (targetY - currentY) * 0.15;
+        scene.style.transform = `translate(${currentX}px, ${currentY}px) scale(${currentScale})`;
+        requestAnimationFrame(animate);
+    }
+    animate();
+
+    window.addEventListener('mousedown', (e) => { if(e.button === 0) { paint(e.clientX, e.clientY); document.getElementById('historyMenu').style.display='none'; } });
+    window.addEventListener('mousemove', (e) => {
+        if(e.buttons === 1) paint(e.clientX, e.clientY);
+        if(e.buttons === 4) { targetX += e.movementX; targetY += e.movementY; }
+    });
+    window.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const delta = e.deltaY < 0 ? 1.2 : 0.8;
+        const sX = (e.clientX - targetX) / targetScale;
+        const sY = (e.clientY - targetY) / targetScale;
+        targetScale = Math.min(Math.max(0.1, targetScale * delta), 20);
+        targetX = e.clientX - sX * targetScale;
+        targetY = e.clientY - sY * targetScale;
+    }, { passive: false });
+</script>
+</body>
+</html>
