@@ -5,31 +5,42 @@ const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: "*" } });
 
-// --- ДОБАВЬ ЭТИ СТРОКИ ---
-// Это заставит сервер "раздавать" статические файлы (html, js, mp3) из текущей папки
-app.use(express.static(path.join(__dirname, '.')));
+// Настройка CORS для безопасности
+const io = new Server(server, {
+    cors: {
+        origin: "*",
+        methods: ["GET", "POST"]
+    }
+});
 
-// Это скажет серверу при заходе на главную (/) отдавать index.html
+// Раздаем статику (html, mp3, css)
+app.use(express.static(__dirname));
+
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
-// -------------------------
 
 let board = {}; 
 let history = {}; 
 
 io.on('connection', (socket) => {
+    console.log('User connected:', socket.id);
+
+    // Сразу шлем текущую доску
     socket.emit('init_board', board);
 
     socket.on('paint', (data) => {
         const { x, y, color, user } = data;
         const key = `${x},${y}`;
+        
         board[key] = color;
+        
         if (!history[key]) history[key] = [];
         history[key].unshift({ user, color, time: new Date().toLocaleTimeString() });
         if (history[key].length > 10) history[key].pop();
+
+        // Шлем всем, включая отправителя, чтобы подтвердить отрисовку
         io.emit('pixel_update', { x, y, color });
     });
 
@@ -38,5 +49,8 @@ io.on('connection', (socket) => {
     });
 });
 
+// Render сам назначит порт через process.env.PORT
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`Сервер запущен на порту ${PORT}`));
+server.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running on port ${PORT}`);
+});
