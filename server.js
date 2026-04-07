@@ -5,15 +5,15 @@ const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: "*" } });
+const io = new Server(server, {
+    cors: { origin: "*" }
+});
 
-// Указываем серверу, где лежат файлы
-const publicPath = path.join(__dirname, '.');
-app.use(express.static(publicPath));
+// Настройка статических файлов
+app.use(express.static(__dirname));
 
-// Главная страница
 app.get('/', (req, res) => {
-    res.sendFile(path.join(publicPath, 'index.html'));
+    res.sendFile(path.join(__dirname, 'index.html'));
 });
 
 let board = {}; 
@@ -22,6 +22,7 @@ let bannedUsers = new Set();
 const ADMIN_DATA = { login: "gggol2q", pass: "wqrqwe241d" };
 
 io.on('connection', (socket) => {
+    console.log('Новое подключение:', socket.id);
     socket.emit('init_board', board);
 
     socket.on('paint', (data) => {
@@ -51,7 +52,6 @@ io.on('connection', (socket) => {
 });
 
 const PORT = process.env.PORT || 3000;
-// Важно: слушаем на 0.0.0.0
 server.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server is running on port ${PORT}`);
+    console.log(`Сервер запущен на порту ${PORT}`);
 });
