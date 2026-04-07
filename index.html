@@ -1,52 +1,169 @@
-<div id="adminPanel" style="display:none; position:fixed; top:20px; right:20px; background:var(--panel); border:2px solid var(--accent); padding:20px; border-radius:15px; z-index:2000; backdrop-filter:blur(10px);">
-    <h3 style="margin-top:0; color:var(--accent);">Админ-панель</h3>
-    <button onclick="adminClear()" style="background:#ef4444; color:white; border:none; padding:10px; border-radius:5px; cursor:pointer; width:100%; margin-bottom:10px;">ОЧИСТИТЬ ВСЁ</button>
-    <input type="text" id="banNick" placeholder="Ник для бана" style="width:100%; margin-bottom:5px; background:#111; color:white; border:1px solid #444; padding:5px;">
-    <button onclick="adminBan()" style="width:100%; padding:8px; cursor:pointer;">Забанить</button>
-    <button onclick="closeAdmin()" style="margin-top:10px; background:none; color:#888; border:none; cursor:pointer; width:100%;">Закрыть</button>
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Pixel Battle Online</title>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <style>
+        :root { --bg: #0b061a; --panel: rgba(20, 15, 35, 0.95); --accent: #a855f7; --text: #f1f5f9; }
+        body { margin: 0; background: var(--bg); color: var(--text); font-family: sans-serif; overflow: hidden; user-select: none; }
+        #authOverlay { position: fixed; inset: 0; background: #020617; display: flex; align-items: center; justify-content: center; z-index: 1000; transition: 0.5s; }
+        .auth-card { background: var(--panel); padding: 40px; border-radius: 24px; border: 1px solid var(--accent); text-align: center; width: 300px; }
+        #viewport { width: 100vw; height: 100vh; cursor: crosshair; background: #000; }
+        #scene { position: absolute; transform-origin: 0 0; }
+        canvas { background: white; image-rendering: pixelated; display: block; }
+        .ui { position: fixed; bottom: 25px; left: 50%; transform: translateX(-50%); background: var(--panel); padding: 10px 25px; border-radius: 100px; display: flex; align-items: center; gap: 15px; border: 1px solid var(--accent); z-index: 100; }
+        input[type="color"] { width: 40px; height: 40px; cursor: pointer; border: 2px solid white; border-radius: 50%; background: none; }
+        input[type="text"] { width: 100%; padding: 10px; margin-bottom: 15px; border-radius: 8px; border: 1px solid #444; background: #222; color: white; outline: none; }
+        #adminPanel { display:none; position:fixed; top:20px; right:20px; background:var(--panel); border:2px solid var(--accent); padding:20px; border-radius:15px; z-index:2000; width: 180px; }
+        #openAdminBtn { position:fixed; top:0; right:0; width:30px; height:30px; cursor:pointer; opacity:0.01; background:white; z-index: 2001; }
+    </style>
+</head>
+<body>
+
+<div id="openAdminBtn" onclick="askAdmin()"></div>
+
+<div id="adminPanel">
+    <h3 style="margin:0 0 10px 0; font-size:14px; color:var(--accent);">Админка</h3>
+    <button onclick="adminClear()" style="width:100%; background:#ef4444; color:white; border:none; padding:8px; border-radius:5px; cursor:pointer; font-weight:bold;">WIPE ALL</button>
+    <input type="text" id="banNick" placeholder="Ник для бана" style="margin-top:10px; font-size:12px; width:90%;">
+    <button onclick="adminBan()" style="width:100%; padding:5px; margin-top:5px; cursor:pointer;">BAN USER</button>
+    <button onclick="closeAdmin()" style="width:100%; margin-top:10px; background:none; border:none; color:#888; cursor:pointer;">Закрыть</button>
 </div>
 
-<div id="openAdminBtn" onclick="askAdmin()" style="position:fixed; top:5px; right:5px; width:10px; height:10px; cursor:pointer; opacity:0.1; background:white;"></div>
+<div id="authOverlay">
+    <div class="auth-card">
+        <h2 style="color:var(--accent); margin:0 0 20px 0;">Pixel Battle</h2>
+        <input type="text" id="username" placeholder="Придумай ник">
+        <button onclick="start()" style="width:100%; padding:12px; background:var(--accent); border:none; border-radius:8px; color:white; font-weight:bold; cursor:pointer;">Играть</button>
+        <div id="statusInfo" style="margin-top:15px; font-size:11px; color:#555;">Подключение к серверу...</div>
+    </div>
+</div>
+
+<div id="viewport">
+    <div id="scene"><canvas id="canvas"></canvas></div>
+</div>
+
+<div class="ui">
+    <div id="coords" style="font-family:monospace; color:var(--accent); min-width:80px;">X:0 Y:0</div>
+    <input type="color" id="colorPicker" value="#a855f7">
+    <div style="color:#4ade80; font-size:12px; font-weight:bold;">● ONLINE</div>
+</div>
 
 <script>
-    // ... (весь предыдущий код сокетов остается)
+    // Инициализация сокета с защитой
+    let socket;
+    try {
+        socket = io(); 
+    } catch(e) {
+        console.error("Библиотека Socket.io не загружена!");
+        document.getElementById('statusInfo').innerText = "Ошибка загрузки скрипта!";
+    }
 
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const scene = document.getElementById('scene');
+    const GRID = 100, P_SIZE = 20;
+    canvas.width = canvas.height = GRID * P_SIZE;
+
+    ctx.fillStyle = 'white';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    let myNick = "";
+    let lastX = -1, lastY = -1;
+
+    if(socket) {
+        socket.on('connect', () => {
+            document.getElementById('statusInfo').innerText = "Сервер готов! ✅";
+            document.getElementById('statusInfo').style.color = "#4ade80";
+        });
+
+        socket.on('init_board', (board) => {
+            ctx.fillStyle = 'white';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            for (let key in board) {
+                const [x, y] = key.split(',').map(Number);
+                ctx.fillStyle = board[key];
+                ctx.fillRect(x * P_SIZE, y * P_SIZE, P_SIZE, P_SIZE);
+            }
+        });
+
+        socket.on('pixel_update', (data) => {
+            ctx.fillStyle = data.color;
+            ctx.fillRect(data.x * P_SIZE, data.y * P_SIZE, P_SIZE, P_SIZE);
+        });
+
+        socket.on('admin_success', (ok) => {
+            if(ok) document.getElementById('adminPanel').style.display = 'block';
+            else alert("Доступ запрещен!");
+        });
+    }
+
+    function start() {
+        const val = document.getElementById('username').value;
+        if(!val) return alert("Введите никнейм!");
+        myNick = val;
+        document.getElementById('authOverlay').style.opacity = '0';
+        setTimeout(() => document.getElementById('authOverlay').style.display = 'none', 500);
+    }
+
+    function paint(cx, cy) {
+        if(!myNick || !socket) return;
+        const rect = canvas.getBoundingClientRect();
+        const x = Math.floor((cx - rect.left) / (P_SIZE * currentScale));
+        const y = Math.floor((cy - rect.top) / (P_SIZE * currentScale));
+
+        if (x >= 0 && x < GRID && y >= 0 && y < GRID && (x !== lastX || y !== lastY)) {
+            const color = document.getElementById('colorPicker').value;
+            lastX = x; lastY = y;
+            socket.emit('paint', { x, y, color, user: myNick });
+        }
+    }
+
+    // АДМИН КОМАНДЫ
     function askAdmin() {
         const login = prompt("Admin Login:");
-        const pass = prompt("Admin Pass:");
-        socket.emit('admin_login', { login, pass });
+        const pass = prompt("Admin Password:");
+        if(socket) socket.emit('admin_login', { login, pass });
     }
-
-    socket.on('admin_success', (success) => {
-        if(success) {
-            document.getElementById('adminPanel').style.display = 'block';
-        } else {
-            alert("Неверные данные!");
-        }
-    });
-
-    function adminClear() {
-        if(confirm("Реально всё удалить?")) {
-            socket.emit('admin_command', { type: 'clear_all' });
-        }
-    }
-
+    function adminClear() { if(confirm("Стереть всё?")) socket.emit('admin_command', { type: 'clear_all' }); }
     function adminBan() {
-        const user = document.getElementById('banNick').value;
-        if(user) {
-            socket.emit('admin_command', { type: 'ban_user', user: user });
-            alert("Пользователь " + user + " отправлен в бан");
-        }
+        const u = document.getElementById('banNick').value;
+        if(u) socket.emit('admin_command', { type: 'ban_user', user: u });
     }
+    function closeAdmin() { document.getElementById('adminPanel').style.display = 'none'; }
 
-    function closeAdmin() {
-        document.getElementById('adminPanel').style.display = 'none';
+    // КАМЕРА (ЗУМ И ДВИЖЕНИЕ)
+    let targetScale = 0.5, targetX = window.innerWidth/2 - (canvas.width*0.5)/2, targetY = window.innerHeight/2 - (canvas.height*0.5)/2;
+    let currentScale = targetScale, currentX = targetX, currentY = targetY;
+
+    function animate() {
+        currentScale += (targetScale - currentScale) * 0.1;
+        currentX += (targetX - currentX) * 0.1;
+        currentY += (targetY - currentY) * 0.1;
+        scene.style.transform = `translate(${currentX}px, ${currentY}px) scale(${currentScale})`;
+        requestAnimationFrame(animate);
     }
+    animate();
 
-    socket.on('error_msg', (msg) => alert(msg));
-    
-    socket.on('stats_update', (data) => {
-        // Можно выводить онлайн куда-нибудь
-        console.log("Онлайн: " + data.online);
+    window.addEventListener('mousedown', (e) => { if(e.button === 0) paint(e.clientX, e.clientY); });
+    window.addEventListener('mousemove', (e) => {
+        if(e.buttons === 1) paint(e.clientX, e.clientY);
+        if(e.buttons === 4) { targetX += e.movementX; targetY += e.movementY; }
+        const rect = canvas.getBoundingClientRect();
+        const x = Math.floor((e.clientX - rect.left) / (P_SIZE * currentScale));
+        const y = Math.floor((e.clientY - rect.top) / (P_SIZE * currentScale));
+        if (x >= 0 && x < GRID && y >= 0 && y < GRID) document.getElementById('coords').innerText = `X:${x} Y:${y}`;
     });
+    window.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const delta = e.deltaY < 0 ? 1.1 : 0.9;
+        const sX = (e.clientX - targetX) / targetScale;
+        const sY = (e.clientY - targetY) / targetScale;
+        targetScale = Math.min(Math.max(0.1, targetScale * delta), 15);
+        targetX = e.clientX - sX * targetScale;
+        targetY = e.clientY - sY * targetScale;
+    }, { passive: false });
 </script>
+</body>
+</html>
