@@ -5,11 +5,16 @@ const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
+
+// Настройка CORS для безопасности
 const io = new Server(server, {
-    cors: { origin: "*" }
+    cors: {
+        origin: "*",
+        methods: ["GET", "POST"]
+    }
 });
 
-// Настройка статических файлов
+// Раздаем статику (html, mp3, css)
 app.use(express.static(__dirname));
 
 app.get('/', (req, res) => {
@@ -17,41 +22,35 @@ app.get('/', (req, res) => {
 });
 
 let board = {}; 
-let history = {};
-let bannedUsers = new Set();
-const ADMIN_DATA = { login: "gggol2q", pass: "wqrqwe241d" };
+let history = {}; 
 
 io.on('connection', (socket) => {
-    console.log('Новое подключение:', socket.id);
+    console.log('User connected:', socket.id);
+
+    // Сразу шлем текущую доску
     socket.emit('init_board', board);
 
     socket.on('paint', (data) => {
-        if (bannedUsers.has(data.user)) return;
-        const key = `${data.x},${data.y}`;
-        board[key] = data.color;
-        io.emit('pixel_update', { x: data.x, y: data.y, color: data.color });
+        const { x, y, color, user } = data;
+        const key = `${x},${y}`;
+        
+        board[key] = color;
+        
+        if (!history[key]) history[key] = [];
+        history[key].unshift({ user, color, time: new Date().toLocaleTimeString() });
+        if (history[key].length > 10) history[key].pop();
+
+        // Шлем всем, включая отправителя, чтобы подтвердить отрисовку
+        io.emit('pixel_update', { x, y, color });
     });
 
-    socket.on('admin_login', (data) => {
-        if (data.login === ADMIN_DATA.login && data.pass === ADMIN_DATA.pass) {
-            socket.emit('admin_success', true);
-        } else {
-            socket.emit('admin_success', false);
-        }
-    });
-
-    socket.on('admin_command', (command) => {
-        if (command.type === 'clear_all') {
-            board = {};
-            io.emit('init_board', board);
-        }
-        if (command.type === 'ban_user') {
-            bannedUsers.add(command.user);
-        }
+    socket.on('get_history', (key) => {
+        socket.emit('history_data', { key, data: history[key] || [] });
     });
 });
 
+// Render сам назначит порт через process.env.PORT
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
-    console.log(`Сервер запущен на порту ${PORT}`);
+    console.log(`Server running on port ${PORT}`);
 });
