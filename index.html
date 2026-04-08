@@ -2,31 +2,24 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>Pixel Battle 400x400</title>
+    <title>Pixel Battle 400x400 Database Edition</title>
     <script src="/socket.io/socket.io.js"></script>
     <style>
         :root { --bg: #0b061a; --panel: rgba(20, 15, 35, 0.95); --accent: #a855f7; --text: #f1f5f9; }
         body { margin: 0; background: var(--bg); color: var(--text); font-family: sans-serif; overflow: hidden; user-select: none; }
-        
         #authOverlay { position: fixed; inset: 0; background: #020617; display: flex; align-items: center; justify-content: center; z-index: 1000; transition: 0.5s; }
         .auth-card { background: var(--panel); padding: 40px; border-radius: 24px; border: 1px solid var(--accent); text-align: center; width: 300px; }
-        
         #viewport { width: 100vw; height: 100vh; cursor: crosshair; }
         #scene { position: absolute; transform-origin: 0 0; }
         canvas { background: white; image-rendering: pixelated; box-shadow: 0 0 100px #000; }
-        
         .ui { position: fixed; bottom: 25px; left: 50%; transform: translateX(-50%); background: var(--panel); padding: 10px 25px; border-radius: 100px; display: flex; align-items: center; gap: 15px; border: 1px solid var(--accent); z-index: 100; }
         input[type="color"] { width: 40px; height: 40px; cursor: pointer; border: 2px solid white; border-radius: 50%; background: none; }
         input[type="text"], input[type="password"] { width: 100%; padding: 12px; margin-bottom: 10px; border-radius: 8px; border: 1px solid #444; background: #222; color: white; box-sizing: border-box; }
-        
         #adminPanel { position: fixed; top: 20px; right: 20px; display: none; background: var(--panel); padding: 15px; border: 1px solid var(--accent); border-radius: 12px; z-index: 200; width: 220px; }
         .admin-tools { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
-        .tool-btn { flex: 1; padding: 10px; background: #1e1b4b; border: 1px solid var(--accent); color: white; cursor: pointer; border-radius: 6px; font-size: 11px; min-width: 90px; transition: 0.2s; }
-        .tool-btn:hover { background: #2e2a6e; }
+        .tool-btn { flex: 1; padding: 10px; background: #1e1b4b; border: 1px solid var(--accent); color: white; cursor: pointer; border-radius: 6px; font-size: 11px; min-width: 90px; }
         .tool-btn.active { background: var(--accent); box-shadow: 0 0 15px var(--accent); }
-        
-        #historyMenu { position: fixed; display: none; background: var(--panel); border: 1px solid var(--accent); padding: 12px; border-radius: 8px; z-index: 500; pointer-events: none; min-width: 120px; }
-        .btn-main { width: 100%; padding: 14px; background: var(--accent); border:none; border-radius:8px; color:white; font-weight:bold; cursor:pointer; font-size: 16px; }
+        .btn-main { width: 100%; padding: 14px; background: var(--accent); border:none; border-radius:8px; color:white; font-weight:bold; cursor:pointer; }
     </style>
 </head>
 <body>
@@ -42,7 +35,7 @@
 </div>
 
 <div id="adminPanel">
-    <div style="color:var(--accent); font-weight: bold; border-bottom: 1px solid #333; padding-bottom: 5px; margin-bottom: 10px;">👑 Админ-панель</div>
+    <div style="color:var(--accent); font-weight: bold; border-bottom: 1px solid #333; padding-bottom: 5px; margin-bottom: 10px;">👑 Панель Zopik_qq</div>
     <div class="admin-tools">
         <button class="tool-btn active" id="btnBrush" onclick="setTool('brush')">🖌 Кисть</button>
         <button class="tool-btn" id="btnEraser" onclick="setTool('eraser')">🧽 Стирачка</button>
@@ -50,8 +43,6 @@
         <button class="tool-btn" onclick="confirmClear()" style="border-color: #ef4444;">💥 Очистить</button>
     </div>
 </div>
-
-<div id="historyMenu"><div id="historyContent" style="font-size:11px;"></div></div>
 
 <div id="viewport"><div id="scene"><canvas id="canvas"></canvas></div></div>
 
@@ -67,7 +58,6 @@
     const ctx = canvas.getContext('2d');
     const scene = document.getElementById('scene');
     
-    // Новые размеры
     const GRID = 400, P_SIZE = 20;
     canvas.width = canvas.height = GRID * P_SIZE;
 
@@ -75,7 +65,6 @@
     let currentTool = 'brush';
     let lastX = -1, lastY = -1;
 
-    // Камера: Стартуем с очень маленького зума, чтобы видеть всё поле
     let targetScale = 0.12, targetX = window.innerWidth/2 - (canvas.width * 0.12)/2, targetY = window.innerHeight/2 - (canvas.height * 0.12)/2;
     let currentScale = targetScale, currentX = targetX, currentY = targetY;
 
@@ -125,7 +114,7 @@
     }
 
     function confirmClear() {
-        if(confirm("Удалить ВСЕ рисунки?")) socket.emit('admin_clear');
+        if(confirm("Удалить прогресс из БД?")) socket.emit('admin_clear');
     }
 
     function paint(cx, cy) {
@@ -150,10 +139,8 @@
     }
     animate();
 
-    // Слушатели событий
     window.addEventListener('mousedown', (e) => { 
         if(e.button === 0) paint(e.clientX, e.clientY); 
-        document.getElementById('historyMenu').style.display='none';
     });
 
     window.addEventListener('mousemove', (e) => {
@@ -176,26 +163,6 @@
         targetX = e.clientX - sX * targetScale;
         targetY = e.clientY - sY * targetScale;
     }, { passive: false });
-
-    window.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        const rect = canvas.getBoundingClientRect();
-        const x = Math.floor((e.clientX - rect.left) / (P_SIZE * currentScale));
-        const y = Math.floor((e.clientY - rect.top) / (P_SIZE * currentScale));
-        if (x >= 0 && x < GRID && y >= 0 && y < GRID) {
-            socket.emit('get_history', `${x},${y}`);
-            const menu = document.getElementById('historyMenu');
-            menu.style.display = 'block';
-            menu.style.left = e.clientX + 'px';
-            menu.style.top = e.clientY + 'px';
-        }
-    });
-
-    socket.on('history_data', (res) => {
-        document.getElementById('historyContent').innerHTML = res.data.length ? res.data.map(h => `
-            <div style="margin-bottom:4px;"><b>${h.user}:</b> <small style="color:#888">${h.time}</small></div>
-        `).join('') : "Пусто";
-    });
 </script>
 </body>
 </html>
