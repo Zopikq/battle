@@ -2,46 +2,66 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
+const fs = require('fs');
 
 const app = express();
 const server = http.createServer(app);
+const io = new Server(server);
 
-// Настройка CORS для безопасности
-const io = new Server(server, {
-    cors: {
-        origin: "*",
-        methods: ["GET", "POST"]
-    }
-});
-
-// Раздаем статику (html, mp3, css)
 app.use(express.static(__dirname));
-
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'index.html'));
-});
 
 let board = {}; 
 let history = {}; 
 
-io.on('connection', (socket) => {
-    console.log('User connected:', socket.id);
+// Загрузка разрешенных пользователей
+function getAllowedUsers() {
+    try {
+        const data = fs.readFileSync(path.join(__dirname, 'allowed.txt'), 'utf8');
+        return data.split('\n').filter(line => line.trim() !== '').reduce((acc, line) => {
+            const [user, pass] = line.trim().split(':');
+            acc[user] = pass;
+            return acc;
+        }, {});
+    } catch (e) {
+        console.error("Ошибка чтения allowed.txt. Создайте файл!");
+        return {};
+    }
+}
 
-    // Сразу шлем текущую доску
-    socket.emit('init_board', board);
+io.on('connection', (socket) => {
+    let currentUser = null;
+
+    socket.on('auth', ({ username, password }) => {
+        const users = getAllowedUsers();
+        if (users[username] && users[username] === password) {
+            currentUser = username;
+            const isAdmin = username.toLowerCase().includes('admin'); // Простая проверка на админа
+            socket.emit('auth_success', { username, isAdmin });
+            socket.emit('init_board', board);
+        } else {
+            socket.emit('auth_error', 'Неверный логин или пароль');
+        }
+    });
 
     socket.on('paint', (data) => {
-        const { x, y, color, user } = data;
+        if (!currentUser) return;
+        const { x, y, color } = data;
         const key = `${x},${y}`;
-        
         board[key] = color;
         
         if (!history[key]) history[key] = [];
-        history[key].unshift({ user, color, time: new Date().toLocaleTimeString() });
-        if (history[key].length > 10) history[key].pop();
+        history[key].unshift({ user: currentUser, color, time: new Date().toLocaleTimeString() });
+        if (history[key].length > 5) history[key].pop();
 
-        // Шлем всем, включая отправителя, чтобы подтвердить отрисовку
         io.emit('pixel_update', { x, y, color });
+    });
+
+    socket.on('admin_clear', () => {
+        if (currentUser && currentUser.toLowerCase().includes('admin')) {
+            board = {};
+            history = {};
+            io.emit('init_board', board);
+        }
     });
 
     socket.on('get_history', (key) => {
@@ -49,8 +69,5 @@ io.on('connection', (socket) => {
     });
 });
 
-// Render сам назначит порт через process.env.PORT
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on port ${PORT}`);
-});
+server.listen(PORT, '0.0.0.0', () => console.log(`Server on port ${PORT}`));
