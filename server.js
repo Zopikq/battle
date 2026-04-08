@@ -13,17 +13,15 @@ app.use(express.static(__dirname));
 let board = {}; 
 let history = {}; 
 
-// Загрузка разрешенных пользователей
 function getAllowedUsers() {
     try {
         const data = fs.readFileSync(path.join(__dirname, 'allowed.txt'), 'utf8');
         return data.split('\n').filter(line => line.trim() !== '').reduce((acc, line) => {
             const [user, pass] = line.trim().split(':');
-            acc[user] = pass;
+            if (user && pass) acc[user] = pass;
             return acc;
         }, {});
     } catch (e) {
-        console.error("Ошибка чтения allowed.txt. Создайте файл!");
         return {};
     }
 }
@@ -35,7 +33,7 @@ io.on('connection', (socket) => {
         const users = getAllowedUsers();
         if (users[username] && users[username] === password) {
             currentUser = username;
-            const isAdmin = username.toLowerCase().includes('admin'); // Простая проверка на админа
+            const isAdmin = username === 'Zopik_qq' || username.toLowerCase().includes('admin');
             socket.emit('auth_success', { username, isAdmin });
             socket.emit('init_board', board);
         } else {
@@ -46,20 +44,36 @@ io.on('connection', (socket) => {
     socket.on('paint', (data) => {
         if (!currentUser) return;
         const { x, y, color } = data;
+        if (x < 0 || x >= 400 || y < 0 || y >= 400) return;
+
         const key = `${x},${y}`;
-        board[key] = color;
+        if (color === 'erase' || color === '#ffffff') {
+            delete board[key];
+        } else {
+            board[key] = color;
+        }
         
         if (!history[key]) history[key] = [];
-        history[key].unshift({ user: currentUser, color, time: new Date().toLocaleTimeString() });
+        history[key].unshift({ user: currentUser, time: new Date().toLocaleTimeString() });
         if (history[key].length > 5) history[key].pop();
 
-        io.emit('pixel_update', { x, y, color });
+        io.emit('pixel_update', { x, y, color: (color === 'erase' ? '#ffffff' : color) });
     });
 
     socket.on('admin_clear', () => {
-        if (currentUser && currentUser.toLowerCase().includes('admin')) {
+        if (currentUser === 'Zopik_qq' || currentUser.toLowerCase().includes('admin')) {
             board = {};
             history = {};
+            io.emit('init_board', board);
+        }
+    });
+
+    socket.on('admin_fill', (color) => {
+        if (currentUser === 'Zopik_qq' || currentUser.toLowerCase().includes('admin')) {
+            board = {};
+            for(let x=0; x<400; x++) {
+                for(let y=0; y<400; y++) board[`${x},${y}`] = color;
+            }
             io.emit('init_board', board);
         }
     });
@@ -70,4 +84,4 @@ io.on('connection', (socket) => {
 });
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, '0.0.0.0', () => console.log(`Server on port ${PORT}`));
+server.listen(PORT, '0.0.0.0', () => console.log(`Server started on port ${PORT}`));
