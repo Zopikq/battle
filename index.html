@@ -7,7 +7,7 @@
     <style>
         :root { --bg: #0b061a; --panel: rgba(20, 15, 35, 0.95); --accent: #a855f7; --text: #f1f5f9; }
         body { margin: 0; background: var(--bg); color: var(--text); font-family: sans-serif; overflow: hidden; user-select: none; }
-        #authOverlay { position: fixed; inset: 0; background: #020617; display: flex; align-items: center; justify-content: center; z-index: 1000; }
+        #authOverlay { position: fixed; inset: 0; background: #020617; display: flex; align-items: center; justify-content: center; z-index: 1000; transition: 0.5s; }
         .auth-card { background: var(--panel); padding: 40px; border-radius: 24px; border: 1px solid var(--accent); text-align: center; width: 300px; }
         #viewport { width: 100vw; height: 100vh; cursor: crosshair; }
         #scene { position: absolute; transform-origin: 0 0; }
@@ -15,7 +15,9 @@
         #historyMenu { position: fixed; display: none; background: var(--panel); border: 1px solid var(--accent); padding: 15px; border-radius: 12px; z-index: 500; pointer-events: none; }
         .ui { position: fixed; bottom: 25px; left: 50%; transform: translateX(-50%); background: var(--panel); padding: 10px 25px; border-radius: 100px; display: flex; align-items: center; gap: 15px; border: 1px solid var(--accent); z-index: 100; }
         input[type="color"] { width: 40px; height: 40px; cursor: pointer; border: 2px solid white; border-radius: 50%; background: none; }
-        input[type="text"] { width: 100%; padding: 10px; margin-bottom: 15px; border-radius: 8px; border: 1px solid #444; background: #222; color: white; }
+        input[type="text"], input[type="password"] { width: 100%; padding: 10px; margin-bottom: 10px; border-radius: 8px; border: 1px solid #444; background: #222; color: white; box-sizing: border-box; }
+        #adminPanel { position: fixed; top: 20px; right: 20px; display: none; background: var(--panel); padding: 15px; border: 1px solid red; border-radius: 12px; z-index: 200; }
+        .btn { width: 100%; padding: 12px; background: var(--accent); border:none; border-radius:8px; color:white; font-weight:bold; cursor:pointer; }
     </style>
 </head>
 <body>
@@ -23,27 +25,30 @@
 <div id="authOverlay">
     <div class="auth-card">
         <h2 style="color:var(--accent)">Pixel Battle</h2>
-        <input type="text" id="username" placeholder="Ваш ник">
-        <button onclick="start()" style="width:100%; padding:12px; background:var(--accent); border:none; border-radius:8px; color:white; font-weight:bold; cursor:pointer;">Начать</button>
+        <input type="text" id="username" placeholder="Логин">
+        <input type="password" id="password" placeholder="Пароль">
+        <button onclick="login()" class="btn">Войти</button>
+        <p id="error" style="color: #ef4444; font-size: 12px; margin-top: 10px;"></p>
     </div>
 </div>
 
-<div id="historyMenu">
-    <div id="historyContent" style="font-size:11px;"></div>
+<div id="adminPanel">
+    <h4 style="margin:0 0 10px 0; color:red;">Admin Mode</h4>
+    <button onclick="socket.emit('admin_clear')" style="background:red; color:white; border:none; padding:5px 10px; border-radius:5px; cursor:pointer;">Очистить доску</button>
 </div>
 
-<div id="viewport">
-    <div id="scene"><canvas id="canvas"></canvas></div>
-</div>
+<div id="historyMenu"><div id="historyContent" style="font-size:11px;"></div></div>
+
+<div id="viewport"><div id="scene"><canvas id="canvas"></canvas></div></div>
 
 <div class="ui">
     <div id="coords" style="font-family:monospace; color:var(--accent);">X:0 Y:0</div>
     <input type="color" id="colorPicker" value="#a855f7">
-    <div style="color:#4ade80; font-size:12px;">● Online</div>
+    <div id="myUser" style="font-size:12px; font-weight:bold;">...</div>
 </div>
 
 <script>
-    const socket = io(); // Авто-коннект к текущему домену
+    const socket = io();
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
     const scene = document.getElementById('scene');
@@ -53,15 +58,24 @@
     let myNick = "";
     let lastX = -1, lastY = -1;
 
-    function start() {
-        const val = document.getElementById('username').value;
-        if(!val) return alert("Введите ник!");
-        myNick = val;
-        document.getElementById('authOverlay').style.opacity = '0';
-        setTimeout(() => document.getElementById('authOverlay').remove(), 500);
+    function login() {
+        const username = document.getElementById('username').value;
+        const password = document.getElementById('password').value;
+        socket.emit('auth', { username, password });
     }
 
-    // Рендерим доску при входе
+    socket.on('auth_success', (data) => {
+        myNick = data.username;
+        document.getElementById('myUser').innerText = myNick;
+        document.getElementById('authOverlay').style.opacity = '0';
+        setTimeout(() => document.getElementById('authOverlay').remove(), 500);
+        if(data.isAdmin) document.getElementById('adminPanel').style.display = 'block';
+    });
+
+    socket.on('auth_error', (msg) => {
+        document.getElementById('error').innerText = msg;
+    });
+
     socket.on('init_board', (board) => {
         ctx.fillStyle = 'white';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -72,7 +86,6 @@
         }
     });
 
-    // Получаем обновления
     socket.on('pixel_update', (data) => {
         ctx.fillStyle = data.color;
         ctx.fillRect(data.x * P_SIZE, data.y * P_SIZE, P_SIZE, P_SIZE);
@@ -92,15 +105,14 @@
         const rect = canvas.getBoundingClientRect();
         const x = Math.floor((cx - rect.left) / (P_SIZE * currentScale));
         const y = Math.floor((cy - rect.top) / (P_SIZE * currentScale));
-
         if (x >= 0 && x < GRID && y >= 0 && y < GRID && (x !== lastX || y !== lastY)) {
             const color = document.getElementById('colorPicker').value;
             lastX = x; lastY = y;
-            socket.emit('paint', { x, y, color, user: myNick });
+            socket.emit('paint', { x, y, color });
         }
     }
 
-    // КАМЕРА
+    // Камера и управление
     let targetScale = 0.6, targetX = window.innerWidth/2 - (canvas.width*0.6)/2, targetY = window.innerHeight/2 - (canvas.height*0.6)/2;
     let currentScale = targetScale, currentX = targetX, currentY = targetY;
 
@@ -121,7 +133,6 @@
     window.addEventListener('mousemove', (e) => {
         if(e.buttons === 1) paint(e.clientX, e.clientY);
         if(e.buttons === 4) { targetX += e.movementX; targetY += e.movementY; }
-        
         const rect = canvas.getBoundingClientRect();
         const x = Math.floor((e.clientX - rect.left) / (P_SIZE * currentScale));
         const y = Math.floor((e.clientY - rect.top) / (P_SIZE * currentScale));
